@@ -85,11 +85,28 @@ wheels = [
 ]
 
 [[package]]
+name = "cdk-ecr-deployment"
+version = "4.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aws-cdk-lib" },
+    { name = "constructs" },
+    { name = "jsii" },
+    { name = "publication" },
+    { name = "typeguard" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a9/b7/14917402b99511b9e13416aa9baa7d940b1ca6ceeb833d0be61f2262ac85/cdk_ecr_deployment-4.0.3.tar.gz", hash = "sha256:62696cd5296c8546f1142aa532418259a3c2494648ecffb7a7e6e518f2c1787a", size = 21341390, upload-time = "2025-09-08T14:18:02.203Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/a2/a10d1a7e8eb20c6562341e0e8e031155626aa7169eef003ba7f720dafcea/cdk_ecr_deployment-4.0.3-py3-none-any.whl", hash = "sha256:ab7b4b8dceaf90879e11df85b4a0923272155589c204cfeff9d9ec7a0fb2076e", size = 21340208, upload-time = "2025-09-08T14:17:59.581Z" },
+]
+
+[[package]]
 name = "cloudformation"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aws-cdk-lib" },
+    { name = "cdk-ecr-deployment" },
     { name = "constructs" },
 ]
 
@@ -101,6 +118,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aws-cdk-lib", specifier = ">=2.225.0" },
+    { name = "cdk-ecr-deployment", specifier = ">=4.0.3" },
     { name = "constructs", specifier = ">=10.4.3" },
 ]
 
