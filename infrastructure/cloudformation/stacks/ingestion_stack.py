@@ -1,3 +1,5 @@
+import os
+
 from aws_cdk import (
     CfnOutput,
     Stack,
@@ -7,6 +9,8 @@ from aws_cdk import (
     aws_ec2 as ec2,
     aws_ecs_patterns as ecs_patterns,
     aws_logs as logs,
+    aws_route53 as route53,
+    aws_certificatemanager as acm,
 )
 from constructs import Construct
 from cdk_ecr_deployment import ECRDeployment, DockerImageName
@@ -26,6 +30,20 @@ class IngestionStack(Stack):
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
+        domain_name = os.environ["DOMAIN_NAME"]
+        subdomain_name = f"api.{domain_name}"
+        hosted_zone = route53.HostedZone.from_lookup(
+            scope=self,
+            id="HostedZone",
+            domain_name=domain_name,
+        )
+        certificate = acm.DnsValidatedCertificate(
+            self,
+            f"{PROJECT_NAME}-ingestion-api-cert",
+            domain_name=subdomain_name,
+            hosted_zone=hosted_zone,
+            region=self.region,
+        )
         localDockerImage = ecr_assets.DockerImageAsset(
             self,
             f"{PROJECT_NAME}-ingestion_api-DockerAsset",
@@ -70,6 +88,10 @@ class IngestionStack(Stack):
             task_definition=task_def,
             desired_count=1,
             min_healthy_percent=100,
+            domain_name=subdomain_name,
+            domain_zone=hosted_zone,
+            certificate=certificate,
+            redirect_http=True,
         )
         service.service.auto_scale_task_count(min_capacity=1, max_capacity=5)
         service.target_group.configure_health_check(
@@ -79,5 +101,5 @@ class IngestionStack(Stack):
         CfnOutput(
             self,
             f"{PROJECT_NAME}-ingestion_api-ingress_url",
-            value=f"http://{service.load_balancer.load_balancer_dns_name}",
+            value=f"https://{subdomain_name}",
         )
