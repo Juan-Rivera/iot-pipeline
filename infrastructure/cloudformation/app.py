@@ -18,6 +18,8 @@ ingestion = IngestionStack(
     scope=app,
     construct_id=f"{PROJECT_NAME}-ingestion-stack",
     repository=infra.repository,
+    cluster=infra.cluster,
+    vpc=infra.vpc,
 )
 
 app.synth()
