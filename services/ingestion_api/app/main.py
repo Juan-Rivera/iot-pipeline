@@ -16,6 +16,7 @@ API_KEY_SECRET_ARN = os.environ.get("API_KEY_SECRET_ARN")
 AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
 secrets_client = boto3.client("secretsmanager", region_name=AWS_REGION)
 
+
 _API_KEY_CACHE = {
     "value": None,
     "expires_at": 0.0,
