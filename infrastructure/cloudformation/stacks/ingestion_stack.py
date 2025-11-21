@@ -14,6 +14,7 @@ from aws_cdk import (
     aws_certificatemanager as acm,
     aws_wafv2 as wafv2,
     aws_secretsmanager as secretsmanager,
+    aws_lambda as _lambda,
 )
 from constructs import Construct
 from cdk_ecr_deployment import ECRDeployment, DockerImageName
@@ -33,7 +34,6 @@ class IngestionStack(Stack):
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
-        # Will be automatically rotated!!
         api_key_secret = secretsmanager.Secret(
             self,
             f"{PROJECT_NAME}-ingestion_api-key-secret",
@@ -41,6 +41,23 @@ class IngestionStack(Stack):
             generate_secret_string=secretsmanager.SecretStringGenerator(
                 exclude_punctuation=True,
             ),
+        )
+        rotation_fn = _lambda.Function(
+            self,
+            f"{PROJECT_NAME}-ingestion_api-key-rotation-fn",
+            function_name=f"{PROJECT_NAME}-ingestion_api-key-rotation-fn",
+            runtime=_lambda.Runtime.PYTHON_3_13,
+            handler="index.lambda_handler",
+            code=_lambda.Code.from_asset("lambdas/secret_rotation"),
+            architecture=_lambda.Architecture.ARM_64,
+            timeout=Duration.seconds(30),
+        )
+        api_key_secret.grant_read(rotation_fn)
+        api_key_secret.grant_write(rotation_fn)
+        api_key_secret.add_rotation_schedule(
+            f"{PROJECT_NAME}-ingestion_api-key-rotation-schedule",
+            rotation_lambda=rotation_fn,
+            automatically_after=Duration.days(1),
         )
         domain_name = os.environ["DOMAIN_NAME"]
         subdomain_name = f"api.{domain_name}"
