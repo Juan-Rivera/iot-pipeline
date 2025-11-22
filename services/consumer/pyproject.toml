@@ -1,0 +1,10 @@
+[project]
+name = "consumer"
+version = "0.1.1"
+description = "Kinesis -> Parquet -> S3 consumer"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "boto3>=1.41.1",
+    "pyarrow>=15.0.0",
+]
