@@ -1,8 +1,12 @@
 from aws_cdk import (
+    Duration,
     Stack,
     aws_ec2 as ec2,
     aws_ecs as ecs,
     aws_ecr as ecr,
+    aws_kinesis as kinesis,
+    aws_s3 as s3,
+    RemovalPolicy,
 )
 from constructs import Construct
 from constants import PROJECT_NAME
@@ -30,4 +34,27 @@ class InfrastructureStack(Stack):
             self,
             f"{PROJECT_NAME}-repository",
             repository_name=PROJECT_NAME,
+        )
+        self.kinesis_stream = kinesis.Stream(
+            self,
+            f"{PROJECT_NAME}-event-stream",
+            stream_name=f"{PROJECT_NAME}-event-stream",
+            shard_count=1,
+            retention_period=Duration.hours(24),
+        )
+        self.s3_data_bucket = s3.Bucket(
+            self,
+            f"{PROJECT_NAME}-data-bucket",
+            bucket_name=f"{PROJECT_NAME}-data-bucket-7f2a4b".lower(),
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            versioned=True,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            enforce_ssl=True,
+            removal_policy=RemovalPolicy.RETAIN,
+            auto_delete_objects=False,
+        )
+        self.s3_data_bucket.add_lifecycle_rule(
+            id="expire-old-parquet",
+            prefix="raw/",
+            expiration=Duration.days(90),
         )
