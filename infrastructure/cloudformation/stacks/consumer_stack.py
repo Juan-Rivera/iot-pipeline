@@ -7,7 +7,10 @@ from aws_cdk import (
     aws_kinesis as kinesis,
     aws_logs as logs,
     aws_s3 as s3,
+    aws_dynamodb as dynamodb,
     aws_applicationautoscaling as autoscaling,
+    RemovalPolicy,
+    Duration,
 )
 from constructs import Construct
 from cdk_ecr_deployment import ECRDeployment, DockerImageName
@@ -25,16 +28,20 @@ class ConsumerStack(Stack):
         vpc: ec2.IVpc,
         kinesis_stream: kinesis.IStream,
         s3_bucket: s3.IBucket,
+        checkpoint_db_table: dynamodb.ITable,
         **kwargs,
     ):
         super().__init__(scope, construct_id, **kwargs)
+
         service_name = f"{PROJECT_NAME}-consumer"
+
         localDockerImage = ecr_assets.DockerImageAsset(
             self,
             f"{service_name}-DockerAsset",
             directory="../../services/consumer",
             file="Dockerfile",
         )
+
         ECRDeployment(
             self,
             f"{service_name}-ImageDeployment",
@@ -46,6 +53,19 @@ class ConsumerStack(Stack):
             self,
             f"{service_name}-logs",
             log_group_name=f"/aws/ecs/{service_name}",
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
+        idempotency_table = dynamodb.Table(
+            self,
+            f"{PROJECT_NAME}-event-idempotency",
+            partition_key=dynamodb.Attribute(
+                name="event_key",
+                type=dynamodb.AttributeType.STRING,
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            time_to_live_attribute="expire_at",
+            removal_policy=RemovalPolicy.RETAIN,
         )
 
         task_def = ecs.FargateTaskDefinition(
@@ -65,12 +85,16 @@ class ConsumerStack(Stack):
             environment={
                 "KINESIS_STREAM": kinesis_stream.stream_name,
                 "S3_BUCKET": s3_bucket.bucket_name,
+                "IDEMPOTENCY_TABLE": idempotency_table.table_name,
+                "CHECKPOINT_TABLE": checkpoint_db_table.table_name,
+                "DEDUP_TTL_DAYS": "30",
             },
         )
 
-        kinesis_stream.grant_read(task_def.task_role)
-
         s3_bucket.grant_put(task_def.task_role)
+        kinesis_stream.grant_read(task_def.task_role)
+        idempotency_table.grant_read_write_data(task_def.task_role)
+        checkpoint_db_table.grant_read_write_data(task_def.task_role)
 
         service = ecs.FargateService(
             self,
@@ -87,10 +111,12 @@ class ConsumerStack(Stack):
             assign_public_ip=False,
             propagate_tags=ecs.PropagatedTagSource.SERVICE,
         )
+
         scaling = service.auto_scale_task_count(
             min_capacity=1,
             max_capacity=5,
         )
+
         scaling.scale_on_metric(
             id=f"{service_name}-scale-based-on-iterator-age",
             metric=kinesis_stream.metric_get_records_iterator_age_milliseconds(
