@@ -4,6 +4,8 @@ from .dynamodb_ import load_checkpoint
 
 logger = logging.getLogger(__name__)
 
+_iterator_age_seconds = 0.0
+
 
 def resolve_shard():
     stream_info = kinesis.describe_stream(StreamName=KINESIS_STREAM)
@@ -35,9 +37,19 @@ def get_shard_iterator():
     return kinesis.get_shard_iterator(**args)["ShardIterator"], shard_id
 
 
-def read_records(shard_iterator: str, limit=100):
+def read_records(shard_iterator: str, limit=1000):
+    global _iterator_age_seconds
+
     resp = kinesis.get_records(
         ShardIterator=shard_iterator,
         Limit=limit,
     )
+
+    millis_behind = resp.get("MillisBehindLatest", 0)
+    _iterator_age_seconds = millis_behind / 1000.0
+
     return resp.get("Records", []), resp.get("NextShardIterator")
+
+
+def get_iterator_age():
+    return _iterator_age_seconds
