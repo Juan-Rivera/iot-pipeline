@@ -8,9 +8,7 @@ from aws_cdk import (
     aws_logs as logs,
     aws_s3 as s3,
     aws_dynamodb as dynamodb,
-    aws_applicationautoscaling as autoscaling,
     RemovalPolicy,
-    Duration,
 )
 from constructs import Construct
 from cdk_ecr_deployment import ECRDeployment, DockerImageName
@@ -41,12 +39,13 @@ class ConsumerStack(Stack):
             directory="../../services/consumer",
             file="Dockerfile",
         )
+        image_tag = f"consumer-{localDockerImage.asset_hash}"
 
         ECRDeployment(
             self,
             f"{service_name}-ImageDeployment",
             src=DockerImageName(localDockerImage.image_uri),
-            dest=DockerImageName(f"{repository.repository_uri}:consumer"),
+            dest=DockerImageName(f"{repository.repository_uri}:{image_tag}"),
         )
 
         log_group = logs.LogGroup(
@@ -54,6 +53,7 @@ class ConsumerStack(Stack):
             f"{service_name}-logs",
             log_group_name=f"/aws/ecs/{service_name}",
             removal_policy=RemovalPolicy.DESTROY,
+            retention=logs.RetentionDays.TWO_WEEKS,
         )
 
         idempotency_table = dynamodb.Table(
@@ -71,13 +71,13 @@ class ConsumerStack(Stack):
         task_def = ecs.FargateTaskDefinition(
             self,
             f"{service_name}-task_definition",
-            cpu=512,
-            memory_limit_mib=1024,
+            cpu=2048,
+            memory_limit_mib=4096,
         )
 
         container = task_def.add_container(
             f"{service_name}-container",
-            image=ecs.ContainerImage.from_ecr_repository(repository, tag="consumer"),
+            image=ecs.ContainerImage.from_ecr_repository(repository, tag=image_tag),
             logging=ecs.LogDrivers.aws_logs(
                 stream_prefix="consumer",
                 log_group=log_group,
@@ -110,27 +110,4 @@ class ConsumerStack(Stack):
             ),
             assign_public_ip=False,
             propagate_tags=ecs.PropagatedTagSource.SERVICE,
-        )
-
-        scaling = service.auto_scale_task_count(
-            min_capacity=1,
-            max_capacity=5,
-        )
-
-        scaling.scale_on_metric(
-            id=f"{service_name}-scale-based-on-iterator-age",
-            metric=kinesis_stream.metric_get_records_iterator_age_milliseconds(
-                statistic="Maximum"
-            ),
-            scaling_steps=[
-                autoscaling.ScalingInterval(
-                    upper=3000,
-                    change=-1,
-                ),
-                autoscaling.ScalingInterval(
-                    lower=7000,
-                    change=+1,
-                ),
-            ],
-            adjustment_type=autoscaling.AdjustmentType.CHANGE_IN_CAPACITY,
         )

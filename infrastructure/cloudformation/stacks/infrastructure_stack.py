@@ -35,6 +35,13 @@ class InfrastructureStack(Stack):
             self,
             f"{PROJECT_NAME}-repository",
             repository_name=PROJECT_NAME,
+            lifecycle_rules=[
+                ecr.LifecycleRule(
+                    description="Keep only last 10 images",
+                    max_image_count=10,
+                    rule_priority=1,
+                )
+            ],
         )
         self.kinesis_stream = kinesis.Stream(
             self,
@@ -43,7 +50,6 @@ class InfrastructureStack(Stack):
             shard_count=1,
             retention_period=Duration.hours(24),
         )
-        # Kinesis Checkpoint Table (shard_id -> sequence_number)
         self.checkpoint_db_table = dynamodb.Table(
             self,
             f"{PROJECT_NAME}-kinesis-checkpoints",

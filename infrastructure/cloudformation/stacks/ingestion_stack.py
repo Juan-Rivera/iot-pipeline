@@ -84,6 +84,7 @@ class IngestionStack(Stack):
                 "KINESIS_STREAM": kinesis_stream.stream_name,
                 "API_KEY_SECRET_ARN": api_key_secret.secret_arn,
             },
+            log_retention=logs.RetentionDays.TWO_WEEKS,
         )
 
         kinesis_stream.grant_write(ingestion_lambda)
@@ -124,7 +125,8 @@ class IngestionStack(Stack):
         log_group = logs.LogGroup(
             self,
             "IngestionHttpApiLogs",
-            log_group_name=f"/aws/lambda/{service_name}-lambda-fn",
+            log_group_name=f"/aws/apigateway/{service_name}",
+            retention=logs.RetentionDays.TWO_WEEKS,
         )
 
         http_api.default_stage.node.default_child.access_log_settings = apigwv2.CfnStage.AccessLogSettingsProperty(
