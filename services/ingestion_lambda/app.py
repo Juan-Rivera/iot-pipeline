@@ -4,6 +4,8 @@ import time
 import boto3
 import logging
 
+import aws_utils
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 if not logger.handlers:
@@ -23,38 +25,67 @@ def get_api_key():
 
 def _is_authorized(func):
     def wrapper(event, context, *args, **kwargs):
-        headers = event.get("headers", {})
+        headers = event.get("headers", {}) or {}
         auth = headers.get("authorization") or headers.get("Authorization")
+        start_time = time.time()
 
         if not auth or not auth.startswith("Bearer "):
+            request_latency = time.time() - start_time
+            aws_utils.emit_metrics(
+                events_received=0,
+                events_ingested=0,
+                events_ignored=0,
+                kinesis_failed=0,
+                request_latency=request_latency,
+                auth_failed=True,
+            )
             return {"statusCode": 401, "body": "Unauthorized"}
 
         incoming_token = auth.replace("Bearer ", "").strip()
-        current_token = get_api_key()
+        expected_token = get_api_key()
 
-        if incoming_token != current_token:
+        if incoming_token != expected_token:
+            request_latency = time.time() - start_time
+            aws_utils.emit_metrics(
+                events_received=0,
+                events_ingested=0,
+                events_ignored=0,
+                kinesis_failed=0,
+                request_latency=request_latency,
+                auth_failed=True,
+            )
             return {"statusCode": 401, "body": "Unauthorized"}
 
-        return func(event, context, *args, **kwargs)
+        return func(event, context, *args, start_time=start_time, **kwargs)
 
     return wrapper
 
 
 @_is_authorized
-def lambda_handler(event, context):
+def lambda_handler(event, context, start_time=None):
+    start = start_time if start_time is not None else time.time()
+
     try:
         body = json.loads(event.get("body", "{}"))
     except Exception:
+        request_latency = time.time() - start
+        aws_utils.emit_metrics(
+            events_received=0,
+            events_ingested=0,
+            events_ignored=0,
+            request_latency=request_latency,
+        )
         return {"statusCode": 400, "body": "Invalid JSON body"}
 
+    incoming_events = body.get("events", [])
+    events_received = len(incoming_events)
     valid_records = []
-    ignored = 0
+    events_ignored = 0
 
-    for ev in body.get("events", []):
+    for ev in incoming_events:
         entity_id = ev.get("data", {}).get("entity_id")
-
         if not entity_id:
-            ignored += 1
+            events_ignored += 1
             continue
 
         envelope = {
@@ -63,39 +94,62 @@ def lambda_handler(event, context):
             "event": ev,
         }
 
-        partition_key = entity_id or ev.get("event_type") or "unknown"
-
         valid_records.append(
             {
                 "Data": json.dumps(envelope),
-                "PartitionKey": partition_key,
+                "PartitionKey": entity_id,
             }
         )
 
     if not valid_records:
+        request_latency = time.time() - start
+
+        aws_utils.emit_metrics(
+            events_received=events_received,
+            events_ingested=0,
+            events_ignored=events_ignored,
+            kinesis_failed=0,
+            request_latency=request_latency,
+        )
+
         return {
             "statusCode": 200,
             "body": json.dumps(
                 {
                     "events_ingested": 0,
-                    "events_ignored": ignored,
+                    "events_ignored": events_ignored,
                 }
             ),
         }
 
+    kinesis_start = time.time()
     response = kinesis.put_records(
         StreamName=STREAM_NAME,
         Records=valid_records,
     )
+    kinesis_end = time.time()
+
+    kinesis_write_latency = kinesis_end - kinesis_start
 
     failed = response.get("FailedRecordCount", 0)
+    ingested_count = len(valid_records) - failed
+    request_latency = time.time() - start
+
+    aws_utils.emit_metrics(
+        events_received=events_received,
+        events_ingested=ingested_count,
+        events_ignored=events_ignored,
+        kinesis_failed=failed,
+        request_latency=request_latency,
+        kinesis_write_latency=kinesis_write_latency,
+    )
 
     return {
         "statusCode": 200,
         "body": json.dumps(
             {
                 "events_ingested": len(valid_records),
-                "events_ignored": ignored,
+                "events_ignored": events_ignored,
                 "partial_failures": failed,
             }
         ),
