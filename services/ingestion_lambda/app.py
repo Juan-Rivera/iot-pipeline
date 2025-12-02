@@ -6,13 +6,9 @@ import logging
 
 import aws_utils
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    logger.addHandler(logging.StreamHandler())
+aws_utils.configure_logging()
 
-kinesis = boto3.client("kinesis")
-STREAM_NAME = os.environ["KINESIS_STREAM"]
+logger = logging.getLogger(__name__)
 
 sm = boto3.client("secretsmanager")
 SECRET_ARN = os.environ["API_KEY_SECRET_ARN"]
@@ -122,14 +118,7 @@ def lambda_handler(event, context, start_time=None):
             ),
         }
 
-    kinesis_start = time.time()
-    response = kinesis.put_records(
-        StreamName=STREAM_NAME,
-        Records=valid_records,
-    )
-    kinesis_end = time.time()
-
-    kinesis_write_latency = kinesis_end - kinesis_start
+    response = aws_utils.push_to_kinesis(valid_records)
 
     failed = response.get("FailedRecordCount", 0)
     ingested_count = len(valid_records) - failed
@@ -139,9 +128,7 @@ def lambda_handler(event, context, start_time=None):
         events_received=events_received,
         events_ingested=ingested_count,
         events_ignored=events_ignored,
-        kinesis_failed=failed,
         request_latency=request_latency,
-        kinesis_write_latency=kinesis_write_latency,
     )
 
     return {

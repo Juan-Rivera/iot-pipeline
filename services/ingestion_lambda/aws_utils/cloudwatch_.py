@@ -9,10 +9,10 @@ if not _metrics_logger.handlers:
 
 
 def emit_metrics(
-    events_received: int,
-    events_ingested: int,
-    events_ignored: int,
-    kinesis_failed: int,
+    events_received: int = None,
+    events_ingested: int = None,
+    events_ignored: int = None,
+    kinesis_failed: int = None,
     request_latency: float = None,
     kinesis_write_latency: float = None,
     auth_failed: bool = False,
@@ -44,6 +44,23 @@ def emit_metrics(
     """
 
     now = int(time.time() * 1000)
+    metric_config = {
+        "events_received": {"value": events_received, "Unit": "Count"},
+        "events_ingested": {"value": events_ingested, "Unit": "Count"},
+        "events_ignored": {"value": events_ignored, "Unit": "Count"},
+        "kinesis_failed_records": {"value": kinesis_failed, "Unit": "Count"},
+        "request_latency_seconds": {"value": request_latency, "Unit": "Seconds"},
+        "kinesis_write_latency_seconds": {
+            "value": kinesis_write_latency,
+            "Unit": "Seconds",
+        },
+        "auth_failures": {"value": 1 if auth_failed else 0, "Unit": "Count"},
+    }
+    active_metrics = {
+        name: config
+        for name, config in metric_config.items()
+        if config["value"] is not None
+    }
 
     metric = {
         "_aws": {
@@ -53,33 +70,14 @@ def emit_metrics(
                     "Namespace": "IoTIngestionPipeline",
                     "Dimensions": [["Service"]],
                     "Metrics": [
-                        {"Name": "events_received", "Unit": "Count"},
-                        {"Name": "events_ingested", "Unit": "Count"},
-                        {"Name": "events_ignored", "Unit": "Count"},
-                        {"Name": "kinesis_failed_records", "Unit": "Count"},
-                        {"Name": "request_latency_seconds", "Unit": "Seconds"},
-                        {"Name": "kinesis_write_latency_seconds", "Unit": "Seconds"},
-                        {"Name": "auth_failures", "Unit": "Count"},
+                        {"Name": name, "Unit": config["Unit"]}
+                        for name, config in active_metrics.items()
                     ],
                 }
             ],
         },
         "Service": service,
-        "events_received": events_received,
-        "events_ingested": events_ingested,
-        "events_ignored": events_ignored,
-        "kinesis_failed_records": kinesis_failed,
-        **(
-            {"request_latency_seconds": request_latency}
-            if request_latency is not None
-            else {}
-        ),
-        **(
-            {"kinesis_write_latency_seconds": kinesis_write_latency}
-            if kinesis_write_latency is not None
-            else {}
-        ),
-        "auth_failures": 1 if auth_failed else 0,
+        **{name: config["value"] for name, config in active_metrics.items()},
     }
 
     _metrics_logger.info(json.dumps(metric))
