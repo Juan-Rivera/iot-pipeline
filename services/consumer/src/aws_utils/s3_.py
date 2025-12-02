@@ -2,8 +2,6 @@ import logging
 import uuid
 import os
 from datetime import datetime, timezone
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -13,68 +11,73 @@ from clients import s3, S3_BUCKET
 logger = logging.getLogger(__name__)
 
 
-def _upload_group(entity_id, group_records):
-    try:
-        table = pa.Table.from_pylist(group_records)
+class ParquetSpiller:
+    def __init__(self, batch_size_threshold=1000):
+        self._buffer = []
+        self._batch_size_threshold = batch_size_threshold
+        self._writer = None
+        self._current_file = f"/tmp/{uuid.uuid4().hex}.parquet"
+        self._record_count = 0
 
-        now = datetime.now(timezone.utc)
-        year = now.year
-        month = f"{now.month:02d}"
-        day = f"{now.day:02d}"
-        timestamp = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    def add_record(self, record):
+        self._buffer.append(record)
 
-        filename = (
-            f"raw/entity_id={entity_id}/"
-            f"year={year}/month={month}/day={day}/"
-            f"{timestamp}-{uuid.uuid4().hex}.parquet"
-        )
+        if len(self._buffer) >= self._batch_size_threshold:
+            self._flush_buffer_to_disk()
 
-        local_path = f"/tmp/{uuid.uuid4().hex[:8]}.parquet"
-        pq.write_table(table, local_path, compression="snappy")
+    def _flush_buffer_to_disk(self):
+        if not self._buffer:
+            return
 
-        s3.upload_file(local_path, S3_BUCKET, filename)
+        try:
+            table = pa.Table.from_pylist(self._buffer)
 
-        os.remove(local_path)
+            if self._writer is None:
+                self._writer = pq.ParquetWriter(
+                    self._current_file, table.schema, compression="snappy"
+                )
 
-        logger.info(
-            f"Uploaded {len(group_records)} records → s3://{S3_BUCKET}/{filename}"
-        )
+            self._writer.write_table(table)
+            self._record_count += len(self._buffer)
+            self._buffer = []
 
-        return filename
-    except Exception as e:
-        logger.error(f"Failed to upload group (entity_id={entity_id}): {e}")
-        raise
+        except Exception as e:
+            logger.error(f"Failed to spill to disk: {e}")
+            raise
 
+    def close_and_upload(self):
+        self._flush_buffer_to_disk()
 
-def write_parquet_and_upload(records):
-    if not records:
-        return
+        if self._writer:
+            self._writer.close()
 
-    groups = defaultdict(list)
+        if self._record_count == 0:
+            if os.path.exists(self._current_file):
+                os.remove(self._current_file)
+            return None
 
-    for record in records:
-        entity_id = record["event"]["data"]["entity_id"]
-        groups[entity_id].append(record)
+        try:
+            now = datetime.now(timezone.utc)
+            year = now.year
+            month = f"{now.month:02d}"
+            day = f"{now.day:02d}"
+            timestamp = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
-    logger.info(
-        f"Grouped {len(records)} records into {len(groups)} groups by entity_id"
-    )
+            filename = (
+                f"raw/year={year}/month={month}/day={day}/"
+                f"{timestamp}-{uuid.uuid4().hex}.parquet"
+            )
 
-    uploaded_files = []
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {}
+            s3.upload_file(self._current_file, S3_BUCKET, filename)
+            logger.info(
+                f"Uploaded {self._record_count} records → s3://{S3_BUCKET}/{filename}"
+            )
 
-        for entity_id, group_records in groups.items():
-            future = executor.submit(_upload_group, entity_id, group_records)
-            futures[future] = entity_id
+            return filename
+        finally:
+            if os.path.exists(self._current_file):
+                os.remove(self._current_file)
 
-        for future in as_completed(futures):
-            entity_id = futures[future]
-            try:
-                filename = future.result()
-                uploaded_files.append(filename)
-            except Exception as e:
-                logger.error(f"Upload failed for entity_id={entity_id}: {e}")
-
-    logger.info(f"Successfully uploaded {len(uploaded_files)} files to S3")
-    return uploaded_files
+            self._current_file = f"/tmp/{uuid.uuid4().hex}.parquet"
+            self._writer = None
+            self._record_count = 0

@@ -6,7 +6,6 @@ from aws_cdk import (
     aws_ecr as ecr,
     aws_kinesis as kinesis,
     aws_s3 as s3,
-    aws_dynamodb as dynamodb,
     RemovalPolicy,
 )
 from constructs import Construct
@@ -47,18 +46,8 @@ class InfrastructureStack(Stack):
             self,
             f"{PROJECT_NAME}-event-stream",
             stream_name=f"{PROJECT_NAME}-event-stream",
-            shard_count=1,
+            shard_count=2,
             retention_period=Duration.hours(24),
-        )
-        self.checkpoint_db_table = dynamodb.Table(
-            self,
-            f"{PROJECT_NAME}-kinesis-checkpoints",
-            partition_key=dynamodb.Attribute(
-                name="shard_id",
-                type=dynamodb.AttributeType.STRING,
-            ),
-            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
-            removal_policy=RemovalPolicy.RETAIN,
         )
         self.s3_data_bucket = s3.Bucket(
             self,

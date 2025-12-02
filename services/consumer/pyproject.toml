@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "consumer"
 version = "0.1.1"
@@ -7,4 +11,5 @@ requires-python = ">=3.13"
 dependencies = [
     "boto3>=1.41.1",
     "pyarrow>=15.0.0",
+    "amazon_kclpy>=3.1.3",
 ]

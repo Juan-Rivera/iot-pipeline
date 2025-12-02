@@ -7,7 +7,7 @@ from aws_cdk import (
     aws_kinesis as kinesis,
     aws_logs as logs,
     aws_s3 as s3,
-    aws_dynamodb as dynamodb,
+    aws_iam as iam,
     RemovalPolicy,
 )
 from constructs import Construct
@@ -26,7 +26,6 @@ class ConsumerStack(Stack):
         vpc: ec2.IVpc,
         kinesis_stream: kinesis.IStream,
         s3_bucket: s3.IBucket,
-        checkpoint_db_table: dynamodb.ITable,
         **kwargs,
     ):
         super().__init__(scope, construct_id, **kwargs)
@@ -56,26 +55,14 @@ class ConsumerStack(Stack):
             retention=logs.RetentionDays.TWO_WEEKS,
         )
 
-        idempotency_table = dynamodb.Table(
-            self,
-            f"{PROJECT_NAME}-event-idempotency",
-            partition_key=dynamodb.Attribute(
-                name="event_key",
-                type=dynamodb.AttributeType.STRING,
-            ),
-            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
-            time_to_live_attribute="expire_at",
-            removal_policy=RemovalPolicy.RETAIN,
-        )
-
         task_def = ecs.FargateTaskDefinition(
             self,
             f"{service_name}-task_definition",
-            cpu=2048,
+            cpu=512,
             memory_limit_mib=4096,
         )
 
-        container = task_def.add_container(
+        task_def.add_container(
             f"{service_name}-container",
             image=ecs.ContainerImage.from_ecr_repository(repository, tag=image_tag),
             logging=ecs.LogDrivers.aws_logs(
@@ -85,24 +72,66 @@ class ConsumerStack(Stack):
             environment={
                 "KINESIS_STREAM": kinesis_stream.stream_name,
                 "S3_BUCKET": s3_bucket.bucket_name,
-                "IDEMPOTENCY_TABLE": idempotency_table.table_name,
-                "CHECKPOINT_TABLE": checkpoint_db_table.table_name,
+                "APPLICATION_NAME": f"{service_name}-checkpoint",
                 "DEDUP_TTL_DAYS": "30",
             },
         )
 
         s3_bucket.grant_put(task_def.task_role)
         kinesis_stream.grant_read(task_def.task_role)
-        idempotency_table.grant_read_write_data(task_def.task_role)
-        checkpoint_db_table.grant_read_write_data(task_def.task_role)
 
-        service = ecs.FargateService(
+        task_def.task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["cloudwatch:PutMetricData"],
+                resources=["*"],
+            )
+        )
+
+        # Additional Kinesis permissions required for KCL not covered by grant_read
+        # RegisterStreamConsumer and SubscribeToShard are only needed for Enhanced Fan-Out
+        task_def.task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "kinesis:DescribeStreamSummary",
+                ],
+                resources=[kinesis_stream.stream_arn],
+            )
+        )
+
+        region = Stack.of(self).region
+        account = Stack.of(self).account
+        table_arn_prefix = (
+            f"arn:aws:dynamodb:{region}:{account}:table/{service_name}-checkpoint"
+        )
+
+        task_def.task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "dynamodb:CreateTable",
+                    "dynamodb:DescribeTable",
+                    "dynamodb:UpdateTable",
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:Scan",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:Query",
+                ],
+                resources=[
+                    table_arn_prefix,
+                    f"{table_arn_prefix}/index/*",
+                    f"{table_arn_prefix}-*",
+                ],
+            )
+        )
+
+        ecs.FargateService(
             self,
             "ConsumerService",
             service_name=service_name,
             cluster=cluster,
             task_definition=task_def,
-            desired_count=1,
+            desired_count=2,
             min_healthy_percent=0,
             max_healthy_percent=100,
             vpc_subnets=ec2.SubnetSelection(

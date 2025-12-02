@@ -35,7 +35,6 @@ consumer = ConsumerStack(
     vpc=infra.vpc,
     kinesis_stream=infra.kinesis_stream,
     s3_bucket=infra.s3_data_bucket,
-    checkpoint_db_table=infra.checkpoint_db_table,
     env=env,
 )
 
