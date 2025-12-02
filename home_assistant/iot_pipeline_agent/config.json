@@ -1,0 +1,21 @@
+{
+  "name": "iot-pipeline Ingestion Agent",
+  "version": "0.3.2",
+  "slug": "iot-pipeline_agent",
+  "description": "Streams Home Assistant events to iot-pipeline backend.",
+  "arch": ["amd64", "armv7", "aarch64"],
+  "startup": "services",
+  "init": "false",
+  "boot": "auto",
+  "options": {
+    "ha_token": "",
+    "backend_url": "",
+    "api_key": ""
+  },
+  "schema": {
+    "ha_token": "str",
+    "backend_url": "str",
+    "api_key": "str"
+  },
+  "repositories": []
+}
